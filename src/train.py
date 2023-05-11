@@ -6,12 +6,7 @@ import torch.nn.functional as F
 import torch
 from utils import power_compress, power_uncompress
 import logging
-from torchinfo import summary
 import argparse
-
-import torch.multiprocessing as mp
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.distributed import init_process_group, destroy_process_group
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--epochs", type=int, default=120, help="number of epochs of training")
@@ -39,6 +34,11 @@ class Trainer:
         self.test_ds = test_ds
         self.model = TSCNet(num_channel=64, num_features=self.n_fft // 2 + 1).cuda()
         self.discriminator = discriminator.Discriminator(ndf=16).cuda()
+
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=args.init_lr)
+        self.optimizer_disc = torch.optim.AdamW(
+            self.discriminator.parameters(), lr=2 * args.init_lr
+        )
 
         self.gpu_id = gpu_id
 
@@ -248,7 +248,7 @@ class Trainer:
             scheduler_D.step()
 
 
-def main(rank=0):
+def main(args, rank=0):
 
     train_ds, test_ds = dataloader.load_data(
         args.data_dir, args.batch_size, 2, args.cut_len
