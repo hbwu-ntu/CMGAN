@@ -31,17 +31,6 @@ args = parser.parse_args()
 logging.basicConfig(level=logging.INFO)
 
 
-def ddp_setup(rank, world_size):
-    """
-    Args:
-        rank: Unique identifier of each process
-        world_size: Total number of processes
-    """
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "12355"
-    init_process_group(backend="nccl", rank=rank, world_size=world_size)
-
-
 class Trainer:
     def __init__(self, train_ds, test_ds, gpu_id: int):
         self.n_fft = 400
@@ -49,24 +38,8 @@ class Trainer:
         self.train_ds = train_ds
         self.test_ds = test_ds
         self.model = TSCNet(num_channel=64, num_features=self.n_fft // 2 + 1).cuda()
-        summary(
-            self.model, [(1, 2, args.cut_len // self.hop + 1, int(self.n_fft / 2) + 1)]
-        )
         self.discriminator = discriminator.Discriminator(ndf=16).cuda()
-        summary(
-            self.discriminator,
-            [
-                (1, 1, int(self.n_fft / 2) + 1, args.cut_len // self.hop + 1),
-                (1, 1, int(self.n_fft / 2) + 1, args.cut_len // self.hop + 1),
-            ],
-        )
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=args.init_lr)
-        self.optimizer_disc = torch.optim.AdamW(
-            self.discriminator.parameters(), lr=2 * args.init_lr
-        )
 
-        self.model = DDP(self.model, device_ids=[gpu_id])
-        self.discriminator = DDP(self.discriminator, device_ids=[gpu_id])
         self.gpu_id = gpu_id
 
     def forward_generator_step(self, clean, noisy):
@@ -275,23 +248,15 @@ class Trainer:
             scheduler_D.step()
 
 
-def main(rank: int, world_size: int, args):
-    ddp_setup(rank, world_size)
-    if rank == 0:
-        print(args)
-        available_gpus = [
-            torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())
-        ]
-        print(available_gpus)
+def main(rank=0):
+
     train_ds, test_ds = dataloader.load_data(
         args.data_dir, args.batch_size, 2, args.cut_len
     )
     trainer = Trainer(train_ds, test_ds, rank)
     trainer.train()
-    destroy_process_group()
 
 
 if __name__ == "__main__":
 
-    world_size = torch.cuda.device_count()
-    mp.spawn(main, args=(world_size, args), nprocs=world_size)
+    main(args)
